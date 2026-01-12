@@ -8,9 +8,13 @@ import requests
 import time
 import logging
 import configparser
+import base64
 from pathlib import Path
 from typing import Dict, List, Optional
 from data.db import Database
+from helium import start_chrome, go_to, kill_browser
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
 
 
 class SWUCardScraper:
@@ -57,6 +61,10 @@ class SWUCardScraper:
             'Sec-Fetch-Mode': 'cors',
             'Sec-Fetch-Site': 'same-site'
         }
+        
+        # Browser for image downloads
+        self.browser = None
+        self._browser_initialized = False
         
         # Statistics
         self.stats = {
@@ -162,8 +170,28 @@ class SWUCardScraper:
             self.stats['errors'] += 1
             return None
     
+    def _init_browser(self):
+        """Initialize headless browser for image downloads"""
+        if self._browser_initialized:
+            return
+        
+        try:
+            chrome_options = Options()
+            chrome_options.add_argument('--headless')
+            chrome_options.add_argument('--disable-gpu')
+            chrome_options.add_argument('--no-sandbox')
+            chrome_options.add_argument('--disable-dev-shm-usage')
+            chrome_options.add_argument('--window-size=1920,1080')
+            
+            self.browser = webdriver.Chrome(options=chrome_options)
+            self._browser_initialized = True
+            self.logger.info("Browser initialized for image downloads")
+        except Exception as e:
+            self.logger.error(f"Failed to initialize browser: {e}")
+            self.browser = None
+    
     def _download_image(self, url: str, save_path: Path) -> bool:
-        """Download an image from URL
+        """Download an image from URL using headless browser
         
         Args:
             url: Image URL
@@ -177,32 +205,45 @@ class SWUCardScraper:
                 self.logger.debug(f"Image already exists: {save_path.name}")
                 return True
             
-            # Special headers for image downloads
-            image_headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.9',
-                'Accept-Encoding': 'gzip, deflate, br',
-                'Referer': 'https://starwarsunlimited.com/cards',
-                'Connection': 'keep-alive',
-                'Sec-Fetch-Dest': 'image',
-                'Sec-Fetch-Mode': 'no-cors',
-                'Sec-Fetch-Site': 'same-site'
-            }
+            # Initialize browser if needed
+            if not self._browser_initialized:
+                self._init_browser()
             
-            response = requests.get(url, timeout=self.timeout, stream=True, headers=image_headers)
-            response.raise_for_status()
+            if not self.browser:
+                self.logger.warning("Browser not available, skipping image download")
+                return False
             
-            save_path.parent.mkdir(parents=True, exist_ok=True)
+            # Navigate to image URL
+            self.browser.get(url)
+            time.sleep(0.5)  # Wait for image to load
             
-            with open(save_path, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    f.write(chunk)
+            # Get image as base64
+            script = """
+                var img = document.querySelector('img') || document.querySelector('body > img');
+                if (img) {
+                    var canvas = document.createElement('canvas');
+                    canvas.width = img.naturalWidth;
+                    canvas.height = img.naturalHeight;
+                    var ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0);
+                    return canvas.toDataURL('image/png').split(',')[1];
+                }
+                return null;
+            """
             
-            self.logger.debug(f"Downloaded image: {save_path.name}")
-            self.stats['images_downloaded'] += 1
-            time.sleep(0.1)  # Small delay between image downloads
-            return True
+            img_data = self.browser.execute_script(script)
+            
+            if img_data:
+                save_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(save_path, 'wb') as f:
+                    f.write(base64.b64decode(img_data))
+                
+                self.logger.debug(f"Downloaded image: {save_path.name}")
+                self.stats['images_downloaded'] += 1
+                return True
+            else:
+                self.logger.warning(f"Could not extract image from {url}")
+                return False
         
         except Exception as e:
             self.logger.error(f"Failed to download image {url}: {e}")
@@ -472,6 +513,14 @@ class SWUCardScraper:
     
     def _print_statistics(self):
         """Print scraping statistics"""
+        # Clean up browser
+        if self.browser:
+            try:
+                self.browser.quit()
+                self.logger.info("Browser closed")
+            except:
+                pass
+        
         self.logger.info("=" * 60)
         self.logger.info("SCRAPING COMPLETE")
         self.logger.info("=" * 60)
