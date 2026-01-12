@@ -44,6 +44,20 @@ class SWUCardScraper:
         # Setup logging
         self._setup_logging()
         
+        # HTTP headers to avoid 403 errors
+        self.headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'application/json, text/plain, */*',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Referer': 'https://starwarsunlimited.com/',
+            'Origin': 'https://starwarsunlimited.com',
+            'Connection': 'keep-alive',
+            'Sec-Fetch-Dest': 'empty',
+            'Sec-Fetch-Mode': 'cors',
+            'Sec-Fetch-Site': 'same-site'
+        }
+        
         # Statistics
         self.stats = {
             'cards_processed': 0,
@@ -116,13 +130,21 @@ class SWUCardScraper:
         """
         try:
             self.logger.debug(f"Making request to: {url}")
-            response = requests.get(url, timeout=self.timeout)
+            response = requests.get(url, timeout=self.timeout, headers=self.headers)
             response.raise_for_status()
             
             # Rate limiting
             time.sleep(self.request_delay)
             
-            return response.json()
+            # Try to parse JSON
+            try:
+                return response.json()
+            except ValueError as e:
+                self.logger.error(f"Failed to parse JSON response: {e}")
+                self.logger.error(f"Response status: {response.status_code}")
+                self.logger.error(f"Response headers: {response.headers}")
+                self.logger.error(f"Response content (first 500 chars): {response.text[:500]}")
+                raise
         
         except requests.exceptions.RequestException as e:
             self.logger.error(f"Request failed: {e}")
@@ -132,6 +154,11 @@ class SWUCardScraper:
                 time.sleep(2 ** retry_count)  # Exponential backoff
                 return self._make_request(url, retry_count + 1)
             
+            self.stats['errors'] += 1
+            return None
+        
+        except Exception as e:
+            self.logger.error(f"Unexpected error: {e}")
             self.stats['errors'] += 1
             return None
     
@@ -150,7 +177,7 @@ class SWUCardScraper:
                 self.logger.debug(f"Image already exists: {save_path.name}")
                 return True
             
-            response = requests.get(url, timeout=self.timeout, stream=True)
+            response = requests.get(url, timeout=self.timeout, stream=True, headers=self.headers)
             response.raise_for_status()
             
             save_path.parent.mkdir(parents=True, exist_ok=True)

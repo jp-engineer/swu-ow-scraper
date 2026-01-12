@@ -3,6 +3,9 @@
 # HTTP requests for API calls
 requests>=2.31.0
 
+# Brotli decompression support for requests
+brotli>=1.1.0
+
 # Optional: Better configuration file handling
 configparser>=5.3.0
 
