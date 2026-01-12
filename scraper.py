@@ -177,7 +177,20 @@ class SWUCardScraper:
                 self.logger.debug(f"Image already exists: {save_path.name}")
                 return True
             
-            response = requests.get(url, timeout=self.timeout, stream=True, headers=self.headers)
+            # Special headers for image downloads
+            image_headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'Referer': 'https://starwarsunlimited.com/cards',
+                'Connection': 'keep-alive',
+                'Sec-Fetch-Dest': 'image',
+                'Sec-Fetch-Mode': 'no-cors',
+                'Sec-Fetch-Site': 'same-site'
+            }
+            
+            response = requests.get(url, timeout=self.timeout, stream=True, headers=image_headers)
             response.raise_for_status()
             
             save_path.parent.mkdir(parents=True, exist_ok=True)
@@ -188,6 +201,7 @@ class SWUCardScraper:
             
             self.logger.debug(f"Downloaded image: {save_path.name}")
             self.stats['images_downloaded'] += 1
+            time.sleep(0.1)  # Small delay between image downloads
             return True
         
         except Exception as e:
